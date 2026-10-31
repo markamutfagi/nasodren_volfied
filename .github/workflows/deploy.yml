@@ -24,11 +24,16 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      # Cok oyunculu: aktarim sunucusunun adresi (Settings → Variables → VITE_MP_URL,
-      # orn. wss://ornek.onrender.com/mp). Bos kalirsa menude BIRLIKTE OYNA gorunmez.
+      # GOAL-045: yuksek skorlar + cok oyunculu artik Supabase uzerinden.
+      # Settings → Secrets and variables → Actions → Variables'a ekle:
+      #   VITE_SUPABASE_URL      (orn. https://xxxx.supabase.co)
+      #   VITE_SUPABASE_ANON_KEY (Supabase proje ayarlarindaki "anon public" anahtar)
+      # Bos kalirsa yuksek skorlar yerel (localStorage) kalir ve menude
+      # BIRLIKTE OYNA gorunmez — sayfa yine de calisir, cokmez.
       - run: npm run build
         env:
-          VITE_MP_URL: ${{ vars.VITE_MP_URL }}
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

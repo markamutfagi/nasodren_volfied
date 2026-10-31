@@ -34,6 +34,8 @@ import healthAssetUrl from '../../assets/health.png'; // GOAL-013: can ikonu
 import { createMusic } from '../audio/Music';
 // Çok oyunculu: aktarım sunucusuna bağlantı (bkz. COK-OYUNCULU.md)
 import { net } from '../net';
+// GOAL-045: yüksek skorlar artık Supabase'de (gerçekten global, localStorage değil)
+import { supabase, SUPABASE_OK } from '../supabase';
 // GOAL-018: siklamen geri döndü — artık tüm bölümlerin zemininde değil, ilacın
 // kendisinin konu olduğu günün (Koruma modu) bilgi görseli olarak.
 import flowerAssetUrl from '../../assets/siclament.png';
@@ -2661,42 +2663,71 @@ UI.menuScreen.addEventListener('click', e=>{
 });
 
 /* =========================================================================
-   8b. YÜKSEK SKORLAR (GOAL-013, madde 3) — sadece localStorage, backend yok
+   8b. YÜKSEK SKORLAR
+   GOAL-013: ilk sürüm — sadece localStorage, backend yok.
+   GOAL-045: artık gerçekten GLOBAL — Supabase'deki `scores` tablosunda
+   (bkz. supabase/schema.sql). VITE_SUPABASE_URL/ANON_KEY tanımlı değilse ya da
+   istek başarısız olursa (ağ hatası, proje henüz kurulmadıysa) eski yerel
+   listeye sessizce geri düşülüyor — oyun hiçbir zaman bu yüzden kırılmıyor,
+   sadece "global" yerine "bu tarayıcıya özel" bir listeye dönüyor.
    ========================================================================= */
 const HS_KEY = 'nasodren_highscores_v1';
 function escapeHtml(s){
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
-function loadHighScores(){
+function loadHighScoresLocal(){
   try{
     const raw = localStorage.getItem(HS_KEY);
     const arr = raw ? JSON.parse(raw) : [];
     return Array.isArray(arr) ? arr : [];
   }catch(e){ return []; }
 }
-function saveHighScore(name, score){
-  const list = loadHighScores();
-  // done: kür tamamlandı mı (ödül listesi ayırt edebilsin)
-  list.push({ name, score, day:G.level.day, done:G.state === 'won' });
+function saveHighScoreLocal(name, score, day){
+  const list = loadHighScoresLocal();
+  list.push({ name, score, day, done:G.state === 'won' });
   list.sort((a,b)=>b.score-a.score);
   list.length = Math.min(list.length, 10);
   try{ localStorage.setItem(HS_KEY, JSON.stringify(list)); }catch(e){}
-  return list;
 }
-function showHighScores(fromGameOver){
-  const list = loadHighScores();
-  const rows = list.length
-    ? list.map((r,i)=>'<div class="hsRow"><span class="hsRank">'+(i+1)+'</span><span class="hsName">'+escapeHtml(r.name)+'</span><span class="hsScore">'+r.score.toLocaleString('tr-TR')+'</span></div>').join('')
-    : '<p class="lede">Henüz skor yok. İlk sen ol!</p>';
+async function loadHighScores(){
+  if(SUPABASE_OK){
+    try{
+      const { data, error } = await supabase.from('volfied_scores').select('name,score,day').order('score', { ascending:false }).limit(10);
+      if(error) throw error;
+      if(Array.isArray(data)) return data;
+    }catch(e){ console.warn('[scores] Supabase okunamadı, yerel listeye dönülüyor:', e); }
+  }
+  return loadHighScoresLocal();
+}
+async function saveHighScore(name, score){
+  const day = G.level.day;
+  if(SUPABASE_OK){
+    try{
+      const { error } = await supabase.from('volfied_scores').insert({ name, score, day });
+      if(error) throw error;
+      return;
+    }catch(e){ console.warn('[scores] Supabase\'e kaydedilemedi, yerel listeye yazılıyor:', e); }
+  }
+  saveHighScoreLocal(name, score, day);
+}
+async function showHighScores(fromGameOver){
   // GOAL-014: ayrı, tam ekran "Yüksek Skorlar" ekranı — ister ana menüden
   // ister oyun-bitti isim girişinden sonra ulaşılsın, aynı ekran.
+  // GOAL-045: Supabase ağ isteği gerektirdiği için önce "Yükleniyor…" ile
+  // açılıp veri gelince liste yerine konuyor (ekran kapanmayı beklemiyor).
   showMenuScreen(
     `<div class="menuBrand"><div class="kicker">YÜKSEK SKORLAR</div><div class="title">En İyi Tedaviler</div></div>
-     <div class="hsList">${rows}</div>
+     <div class="hsList"><p class="lede">Yükleniyor…</p></div>
      <div class="menuStack">
        ${fromGameOver ? '<button class="menuBtn primary" data-a="restart">YENİDEN OYNA</button>' : ''}
        <button class="menuBtn ghost" data-a="mainmenu">◀ ANA MENÜ</button>
      </div>`);
+  const list = await loadHighScores();
+  const hsListEl = UI.menuContent.querySelector('.hsList');
+  if(!hsListEl) return;   // oyuncu bu sırada başka bir ekrana geçmiş olabilir
+  hsListEl.innerHTML = list.length
+    ? list.map((r,i)=>'<div class="hsRow"><span class="hsRank">'+(i+1)+'</span><span class="hsName">'+escapeHtml(r.name)+'</span><span class="hsScore">'+r.score.toLocaleString('tr-TR')+'</span></div>').join('')
+    : '<p class="lede">Henüz skor yok. İlk sen ol!</p>';
 }
 function showGameOverNameEntry(){
   Sound.scene('menu');   // GOAL-020
@@ -2746,10 +2777,11 @@ function showMainMenu(){
          devam ediyor — menüye ayrı bir arka plan görseli üretmek gerekmiyor.
        - Düğmeler "simge | ad | künye" satırlarına dönüştü: OYNA'nın yanında
          kürün kaç gün sürdüğü, YÜKSEK SKORLAR'ın yanında mevcut rekor yazıyor.
-         Menü, oyuna girmeden önce oyun hakkında da bir şey söylüyor. */
-  const hs = loadHighScores();
-  const best = hs.length ? hs[0] : null;
-  const bestTxt = best ? best.score.toLocaleString('tr-TR') : '—';
+         Menü, oyuna girmeden önce oyun hakkında da bir şey söylüyor.
+
+     GOAL-045: en iyi skor artık Supabase'den (ağ isteği) geliyor; menü bunu
+     beklemeden açılıyor (önce bilinen son değer, sonra güncelleniyor). */
+  const bestTxt = cachedBestScoreTxt;
   showMenuScreen(
     `<div class="menuHero">
        <span class="heroBreath"></span>
@@ -2769,15 +2801,28 @@ function showMainMenu(){
        <button class="menuBtn nav" data-a="levels"><span class="mbGlyph">◈</span
          ><span class="mbLabel">BÖLÜMLER</span><span class="mbHint">GÜN SEÇ</span></button>
        <button class="menuBtn nav" data-a="scores"><span class="mbGlyph">★</span
-         ><span class="mbLabel">YÜKSEK SKORLAR</span><span class="mbHint">${bestTxt}</span></button>
+         ><span class="mbLabel">YÜKSEK SKORLAR</span><span class="mbHint" id="mmBestHint">${bestTxt}</span></button>
        <button class="menuBtn nav" data-a="settings"><span class="mbGlyph">◑</span
          ><span class="mbLabel">AYARLAR</span><span class="mbHint">SES</span></button>
      </div>
      <div class="menuFoot">
        <span>${isTouch ? 'PARMAĞINI SÜRÜKLE' : 'OK TUŞLARI / WASD'}</span><i>·</i>
        <span>${Object.keys(REGIONS).length} BÖLGE · ${LEVELS.length} GÜN</span><i>·</i>
-       <span>EN İYİ <b>${bestTxt}</b></span>
+       <span>EN İYİ <b id="mmBestFoot">${bestTxt}</b></span>
      </div>`);
+  refreshBestScore();
+}
+/* GOAL-045: ana menü açıldıktan sonra Supabase'den en iyi skoru çekip, menü
+   hâlâ ekrandaysa (oyuncu bu sırada başka yere geçmediyse) iki göstergeyi de
+   günceller. Menünün kendisini yeniden çizmiyor — sadece iki metni değiştiriyor. */
+let cachedBestScoreTxt = '—';
+async function refreshBestScore(){
+  const list = await loadHighScores();
+  cachedBestScoreTxt = list.length ? list[0].score.toLocaleString('tr-TR') : '—';
+  const hintEl = UI.menuContent.querySelector('#mmBestHint');
+  const footEl = UI.menuContent.querySelector('#mmBestFoot');
+  if(hintEl) hintEl.textContent = cachedBestScoreTxt;
+  if(footEl) footEl.textContent = cachedBestScoreTxt;
 }
 function showLevelSelect(){
   // GOAL-014 (madde 2): kilit sistemi yok, her gün doğrudan başlatılabilir.
@@ -2841,7 +2886,7 @@ function syncSoundBtn(){
   b.style.color = Sound.on ? '' : 'rgba(255,255,255,.25)';
 }
 
-function doAction(a){
+async function doAction(a){
   if(a === 'start' || a === 'restart'){ hideMenuScreen(); G.levelIdx = 0; G.score = 0; G.lives = 3; introLevel(); }
   else if(a === 'go'){ if(mp.inRound) return; Cine.close(); startLevel(); }   // yarışta tur herkeste aynı anda başlıyor
   // GOAL-037: yeni güne bir can desteğiyle başlanıyor (en fazla 3)
@@ -2865,8 +2910,8 @@ function doAction(a){
     const inp = document.getElementById('nameInput');
     const name = inp ? inp.value.trim() : '';
     if(!name){ if(inp){ inp.classList.remove('errorShake'); void inp.offsetWidth; inp.classList.add('errorShake'); inp.focus(); } return; }
-    saveHighScore(name.slice(0,12), G.score);
-    showHighScores(true);
+    await saveHighScore(name.slice(0,12), G.score);
+    await showHighScores(true);
   }
 }
 $('btnSound').onclick = () => {
@@ -4029,9 +4074,13 @@ function winGame(){
    Yarış skorları yüksek skor listesine yazılmıyor: istemci istediği sonucu
    gönderebilir (hile koruması yok) ve ödül listesi tek oyunculu kürün ölçüsü.
    ========================================================================= */
-/* GitHub Pages statik: aktarım sunucusu ayrı bir yerde çalışmalı ve adresi
-   derlemede verilmeli (VITE_MP_URL). Verilmemişse düğme gösterilmiyor. */
-const MP_OK = !(import.meta.env.PROD && !import.meta.env.VITE_MP_URL && /\.github\.io$/.test(location.hostname));
+/* GOAL-045: çok oyunculu artık Supabase Realtime üzerinden (bkz. net.ts) —
+   barındırma yeri (GitHub Pages, Cloudflare, ...) önemli değil, sadece
+   derlemede VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY verilmiş olması gerekiyor.
+   Eski kontrol sadece ".github.io" barındırmasını kapatıyordu — Cloudflare'de
+   çalışmayan bir aktarım sunucusuyla bile düğmeyi gösteriyordu, asıl hata
+   buradaydı. */
+const MP_OK = SUPABASE_OK;
 const MP_NAME_KEY = 'nasodren_mpname_v1';
 const MP_ROUND_SEC = 240;    // hedefe ulaşamayan da bir yerde dursun (ölçülmedi, ayarlanabilir)
 const MP_SEND_MS = 100;      // ~10 ileti/sn: sunucunun 40/sn sınırının altında

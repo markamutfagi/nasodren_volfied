@@ -1,10 +1,21 @@
+> **GOAL-045 notu (tarihsel):** Bu doküman, `server/relay.mjs` ile çalışan eski
+> WebSocket aktarım sunucusunu anlatıyor. Statik barındırmada (GitHub Pages,
+> Cloudflare Pages) hiç çalışmadığı için — asıl "çok oyunculu çalışmıyor"
+> sorununun kök nedeni buydu — oyun artık `src/net.ts` içinde Supabase
+> Realtime (Presence + Broadcast) kullanıyor, ayrı bir sunucu süreci yok.
+> `net.ts`'nin dışa açtığı arayüz ve ileti biçimleri aynı kaldığı için
+> aşağıdaki protokol/akış açıklamaları (oda, ev sahibi, tur, `st`/`fin`
+> iletileri) hâlâ doğru — sadece "Dağıtım" bölümündeki sunucu barındırma kısmı
+> artık geçerli değil. `server/relay.mjs` referans/taşıma amacıyla repoda
+> duruyor.
+
 # Çok Oyunculu Yapı ve Mobil Notları
 
 Siklamen Akış'ın çevrim içi modunda kullanılan yapının özeti. Başka bir tarayıcı oyununa taşımak için yazıldı:
 neyin oyundan bağımsız olduğu, neyin oyuna göre değişeceği ve mobilde dikkat edilecekler.
 
-Dosyalar: `server/relay.mjs` (sunucu), `src/net.js` (bağlantı), `src/main.js` içindeki "ÇOK OYUNCULU" bölümü (oyun tarafı),
-`vite.config.js` (geliştirme sunucusuna bağlama).
+Dosyalar: `server/relay.mjs` (eski sunucu, artık kullanılmıyor), `src/net.ts` (Supabase Realtime bağlantısı),
+`src/gameplay/GameplayCore.ts` içindeki "10d. ÇOK OYUNCULU" bölümü (oyun tarafı).
 
 ---
 
