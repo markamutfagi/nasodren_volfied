@@ -165,8 +165,39 @@ gerektirmiyor:
 - Hiçbir şey veritabanında saklanmıyor; kanalın son üyesi ayrılınca oda da
   biter.
 
-`nasodren-volfied/src/net.ts` dosyası bu desenin tam, çalışan bir
-uygulaması — oda kurma/katılma doğrulaması (yok/dolu/tur sürüyor
+**Gerçek testte bulunan, taşırken atlanmaması gereken tuzaklar:**
+
+1. **En kritik:** eski WebSocket sunucuları genelde `start`/`fin` gibi "tur
+   başladı/bitti" iletilerini **gönderene de** geri yollar (sunucu tarafında
+   `cast()` "except" almadan çağrılır). Supabase broadcast'i varsayılan
+   `self:false` — kendi gönderdiğin ileti sana geri gelmez. Oyun kodun
+   gönderenin kendi mesajını da işlemeyi bekliyorsa (ör. ev sahibi `start`
+   gönderip kendi turunu da ondan başlatıyorsa), bu tipleri broadcast'e ek
+   olarak **gönderenin kendi listener'ına da yerel teslim et** — yoksa ev
+   sahibinin kendi tarafında tur hiç başlamaz. (`nasodren-volfied/src/net.ts`
+   içindeki `deliver()` fonksiyonuna bak.)
+2. Ev sahibi hesabı `joinedAt`'e göre yapılıyorsa, oyuncu listesini sunucuya/
+   diğer istemcilere ilettiğin her yerde `joinedAt` alanını da taşı — eksik
+   kalırsa saat-kayması koruması (`Math.max(now, ...)`) `NaN`/`null` üretip
+   yanlış oyuncuyu ev sahibi yapar (gerçekten yaşandı, bkz. commit geçmişi).
+3. `supabase.channel(ad)` aynı adlı kanal hâlâ kayıtlıysa onu (bayat Presence
+   durumuyla) geri verebilir — yeni kanal açmadan önce öncekinin kapanışını
+   bekle, `supabase.getChannels()`'ta kalan aynı adlı kanalı da temizle.
+4. Kanala girince ilk Presence durumu boş gelebilir — "oda yok" demeden önce
+   birkaç saniye (650ms yetersiz kaldı, 3000ms kullan) bekle.
+5. Tek bir `CHANNEL_ERROR`/`TIMED_OUT`'ta pes etme (kütüphane kendi yeniden
+   dener); toplam bir giriş süresi (ör. 10sn) koy. Odadayken bağlantı giderse
+   oyuncuyu menüye atma, yeniden bağlanınca (`SUBSCRIBED`) kaydını tekrar
+   gönder.
+6. `pagehide`'da `untrack()` + kanalı kapat — yoksa sekmesi kapanan oyuncu
+   diğerlerinde onlarca saniye "hâlâ odada" görünür.
+
+(Kardeş oyun nasodren3'ün kendi referans dosyası — `SUPABASE-SKOR-VE-COK-OYUNCULU.md`
+— bu tuzakların daha da genişletilmiş bir listesini içeriyor; mid-round katılım
+gibi daha karmaşık bir akış gerekiyorsa ona da bakmaya değer.)
+
+`nasodren-volfied/src/net.ts` dosyası bu desenin (yukarıdaki tüm tuzaklar
+düzeltilmiş hâliyle) tam, çalışan bir uygulaması — oda kurma/katılma doğrulaması (yok/dolu/tur sürüyor
 kontrolleri), renk atama, "ayrıldı" bildirimleri dahil. Kendi oyununa
 taşırken:
 
